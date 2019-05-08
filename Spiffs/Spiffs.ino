@@ -4,7 +4,7 @@
 #include <ArduinoJson.h>
 #include "FS.h"
      
-const char* ssid = "LED";
+const char* ssid = "Productos 1.2.4";
 const char* password = "12345678";
 struct Config{
     String idBoton;
@@ -13,8 +13,14 @@ struct Config{
     String Precio;
     String tiempo;
 };
-String strPulsador;
-String strPulsadorUltimo;
+const byte LATCH = 16; 
+const byte DATA  = 4; 
+const byte CLOCK = 5; 
+const byte chips = 1;
+
+byte estadosBtn[8] = {0,0,0,0,0,0,0,0};
+byte estadoBoton;
+const int tiempoAntirebote =10;
 
 const char *filename = "/datos.json";
 Config config;
@@ -389,6 +395,7 @@ static const char PROGMEM INDEX_HTML[] = R"(
                 }
             }else{ 
                 let arregloDeDato = variable.split(",");
+                console.log(arregloDeDato);
             }
         }
         document.getElementById('nuevoProducto').addEventListener('click', ()=>{
@@ -1051,9 +1058,31 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 void paginaPrincipal(){
     server.send(200, "text/html", INDEX_HTML);
 }
+boolean antirebote(byte Switch[chips], byte i){
+    int contador =0;
+    boolean estado;
+    boolean estadoAnterior;
+    do{
+        estado = (Switch[0] & (1<<i)) != 0 ? 0 : 1;
+        if(estado != estadoAnterior){
+            contador = 0;
+            estadoAnterior = estado;
+        }
+        else{
+            contador = contador +1;
+        }
+        delay(1);
+    }
+    while(contador < tiempoAntirebote);
+    return estado;
+}
 
 void setup(){
-    pinMode(16, OUTPUT);
+    pinMode(LATCH, OUTPUT); 
+    pinMode(CLOCK, OUTPUT);
+    pinMode(DATA, INPUT); 
+    digitalWrite(CLOCK, HIGH); 
+    digitalWrite(LATCH, HIGH);
     Serial.begin(115200);
     WiFi.softAP(ssid, password);
     IPAddress myIP = WiFi.softAPIP();
@@ -1074,17 +1103,26 @@ void setup(){
 void loop(){
     webSocket.loop();
     server.handleClient();
-    if(digitalRead(16) == 0) {
-        strPulsador = "presionado";
-    }else{
-        strPulsador = "NO presionado";
+    byte Switch[chips]; 
+    digitalWrite(CLOCK, HIGH); 
+    digitalWrite(LATCH, LOW); 
+    digitalWrite(LATCH, HIGH); 
+    for(byte i=0; i<chips; i++){ 
+        Switch[i] = shiftIn(DATA, CLOCK, MSBFIRST);
     }
-    if(strPulsador != strPulsadorUltimo){
-        strPulsadorUltimo = strPulsador;
-        String mandarBoton = "btn,"+strPulsador+",16,";
-        int str_len = mandarBoton.length() + 1; 
-        char char_array[str_len];
-        mandarBoton.toCharArray(char_array, str_len);
-        webSocket.broadcastTXT(char_array, str_len);
+    for(byte i=0; i<8; i++){ 
+        estadoBoton = (Switch[0] & (1<<i)) != 0 ? 0 : 1;
+        if(estadoBoton != estadosBtn[i]){
+            if(antirebote(Switch, i)){
+                Serial.print("Se activo el boton ");
+                Serial.println(i);
+                String mandarBoton = "btn,1,"+String(i)+",";
+                int str_len = mandarBoton.length() + 1; 
+                char char_array[str_len];
+                mandarBoton.toCharArray(char_array, str_len);
+                webSocket.broadcastTXT(char_array, str_len);
+            }
+        }
+        estadosBtn[i] = estadoBoton;
     }
 }
